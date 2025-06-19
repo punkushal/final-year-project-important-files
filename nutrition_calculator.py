@@ -91,4 +91,21 @@ class NutritionCalculator:
             'protein': round((target_calories * protein_ratio) / 4, 1),  # 4 cal/gram
             'carbs': round((target_calories * carb_ratio) / 4, 1),       # 4 cal/gram
             'fat': round((target_calories * fat_ratio) / 9, 1)           # 9 cal/gram
-        }        
+        }
+    
+    def get_goal_based_weights(self, goal: str):
+        """
+        Returns weightings for calorie, protein, carbs, fat deviation
+        based on user goal.
+
+        Returns:
+        Dict[str, float]
+        """
+        goal = goal.lower()
+        if goal == 'loss':
+            return {'calories': 0.5, 'protein': 0.3, 'carbs': 0.15, 'fat': 0.05}
+        elif goal == 'gain':
+            return {'calories': 0.3, 'protein': 0.4, 'carbs': 0.2, 'fat': 0.1}
+        else:  # default to balanced
+            return {'calories': 0.4, 'protein': 0.25, 'carbs': 0.2, 'fat': 0.15}
+        
