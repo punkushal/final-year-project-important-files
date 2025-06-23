@@ -1,6 +1,7 @@
 from typing import Dict, List
 import pandas as pd
 import numpy as np
+from scipy.special import softmax
 
 from nutrition_calculator import NutritionCalculator
 
@@ -12,6 +13,76 @@ class ContentBasedRecommender:
     def __init__(self, recipes_df:pd.DataFrame):
         self.recipes_df = recipes_df
         self.nutrition_calc = NutritionCalculator()
+
+    def get_meal_distribution(self, goal:str, activity_level:str):
+        '''
+        Research-based meal calorie distribution that adapts to user goals and activity
+
+        Based on:
+            - Sports nutrition research for active individuals
+            - Weight management studies for calorie distribution
+            - Metabolic research on meal timing
+        '''
+
+        base_distribution = {
+            'loss': {
+                'breakfast': 0.30, # Higher breakfast for metabolism boost
+                'lunch': 0.35, # Larger lunch when most active
+                'dinner': 0.25, # Smaller dinner for weight loss
+                'snack': 0.10 # Controlled snacking
+            },
+            'gain':{
+                'breakfast': 0.25, # moderate breakfast
+                'lunch': 0.30, # sustantial lunch
+                'dinner': 0.35, # larger dinner for recovery
+                'snack': 0.10 # strategic snacking
+            },
+            'maintain': {
+                'breakfast': 0.25,
+                'lunch': 0.35, 
+                'dinner': 0.30, 
+                'snack': 0.10 
+            }
+        }
+        distribution = base_distribution.get(goal, base_distribution['maintain'])
+
+        #Adjust for high acitivity levels (need more fuel)
+        if activity_level in ['very_active', 'moderately_active']:
+            distribution['snack'] += 0.05
+            distribution['dinner'] -= 0.05
+        return distribution
+
+    def get_macro_distribution(self, goal: str, meal_type: str):
+        """
+        Research-based macro distribution by meal type and goal
+        
+        Based on:
+        - Protein timing research for muscle protein synthesis
+        - Carbohydrate timing for energy and recovery
+        - Fat distribution for hormone production and satiety
+        """
+        base_macros = {
+            'loss': {
+                'breakfast': {'protein': 0.35, 'carbs': 0.40, 'fat': 0.25},  # High protein start
+                'lunch': {'protein': 0.30, 'carbs': 0.45, 'fat': 0.25},     # Balanced energy
+                'dinner': {'protein': 0.40, 'carbs': 0.30, 'fat': 0.30},    # Protein-focused
+                'snack': {'protein': 0.25, 'carbs': 0.35, 'fat': 0.40}      # Satisfying fats
+            },
+            'gain': {
+                'breakfast': {'protein': 0.25, 'carbs': 0.50, 'fat': 0.25},  # Energy focus
+                'lunch': {'protein': 0.25, 'carbs': 0.50, 'fat': 0.25},     # Fuel for activity
+                'dinner': {'protein': 0.30, 'carbs': 0.45, 'fat': 0.25},    # Recovery focus
+                'snack': {'protein': 0.20, 'carbs': 0.55, 'fat': 0.25}      # Quick energy
+            },
+            'maintain': {
+                'breakfast': {'protein': 0.25, 'carbs': 0.50, 'fat': 0.25},
+                'lunch': {'protein': 0.25, 'carbs': 0.50, 'fat': 0.25},
+                'dinner': {'protein': 0.30, 'carbs': 0.40, 'fat': 0.30},
+                'snack': {'protein': 0.20, 'carbs': 0.45, 'fat': 0.35}
+            }
+        }
+        macros = base_macros.get(goal, base_macros['maintain'])
+        return macros[meal_type]
 
     def filter_by_dietary_preferences(self, recipe:pd.DataFrame, user_profile:Dict):
         '''
@@ -33,46 +104,82 @@ class ContentBasedRecommender:
         allergy_filters = [f"{a}-free" for a in allergies]
 
         # Filter recipes that are free from all user allergens
-        filtered_recipes = recipe[recipe['allergies_free'].apply(
+        filtered_recipes = filtered_recipes[filtered_recipes['allergies_free'].apply(
             lambda free_list: all(af in free_list for af in allergy_filters)
             )]
         return filtered_recipes
 
-    def calculate_nutritional_score(self, recipe: pd.Series, target_calories:float, target_macros:Dict[str,float], meal_type:str):
 
+    def calculate_nutritional_score(self, recipe: pd.Series, target_calories: float, activity_level: str, meal_type: str, goal: str = 'maintain'):
         '''
-        Score recipes based on how well they match nutritional targets
+        Scoring algorithm using Gaussian decay to match nutritional targets smoothly.
+        Rewards closeness and punishes large mismatches softly.
         '''
-        #Meal-specific calorie distribution
-        meal_calorie_ratios = {
-            'breakfast': 0.25,
-            'lunch':0.35,
-            'dinner':0.30,
-            'snack':0.10
-        }
-        meal_target_calories = target_calories * meal_calorie_ratios.get(meal_type, 0.25)
+    
+        def gaussian_decay(actual, target, tolerance=0.1):
+            """
+            Compute a score between 0 and 1 based on closeness to target using Gaussian decay.
+            Higher score = closer to target.
+            """
+            return np.exp(-((actual - target) ** 2) / (2 * (tolerance * target) ** 2))
+    
+        # Get meal and macro distributions
+        meal_distribution = self.get_meal_distribution(goal, activity_level)
+        macro_distribution = self.get_macro_distribution(goal=goal, meal_type=meal_type)
+    
+        meal_target_calories = target_calories * meal_distribution[meal_type]
+        meal_protein_target = (meal_target_calories * macro_distribution['protein']) / 4
+        meal_carb_target = (meal_target_calories * macro_distribution['carbs']) / 4
+        meal_fat_target = (meal_target_calories * macro_distribution['fat']) / 9
+    
+        # Compute individual scores using Gaussian decay
+        calorie_score = gaussian_decay(recipe['calories'], meal_target_calories, tolerance=0.15)
+        protein_score = gaussian_decay(recipe['protein'], meal_protein_target, tolerance=0.15)
+        carb_score = gaussian_decay(recipe['carbs'], meal_carb_target, tolerance=0.15)
+        fat_score = gaussian_decay(recipe['fats'], meal_fat_target, tolerance=0.15)
 
-        #Calculate target macros for this specific meal
-        meal_protein_target = target_macros['protein'] * meal_calorie_ratios.get(meal_type, 0.25)
-        meal_carb_target = target_macros['carbs'] * meal_calorie_ratios.get(meal_type, 0.25)
-        meal_fat_target = target_macros['fat'] * meal_calorie_ratios.get(meal_type, 0.25)
+        # Goal-based weightings
+        if goal == 'loss':
+            weights = {'calories': 0.40, 'protein': 0.35, 'carbs': 0.15, 'fat': 0.10}
+        elif goal == 'gain':
+            weights = {'calories': 0.35, 'protein': 0.25, 'carbs': 0.30, 'fat': 0.10}
+        else:
+            weights = {'calories': 0.30, 'protein': 0.25, 'carbs': 0.25, 'fat': 0.20}
 
-        #Calculate deviations (normalize to avoid division by zero)
-        calorie_dev = abs(recipe['calories'] - meal_target_calories) / max(meal_target_calories , 1)
-        protein_dev = abs(recipe['protein'] - meal_protein_target) / max(meal_protein_target , 1)
-        carb_dev = abs(recipe['carbs'] - meal_carb_target) / max(meal_carb_target , 1)
-        fat_dev = abs(recipe['fat'] - meal_fat_target) / max(meal_fat_target , 1)
+        # Meal-specific adjustments
+        if meal_type == 'breakfast':
+            weights['protein'] *= 1.2
+        elif meal_type == 'dinner' and goal == 'loss':
+            weights['calories'] *= 1.3
+        elif meal_type == 'snack':
+            weights['fat'] *= 1.2
 
-        #weighted score calculation (lower deviation = higher score)
-        #Calories are most imp, followed by protein, then carbs and fat
-        total_deviation = (0.4 * calorie_dev + 0.25 * protein_dev + 0.2 * carb_dev + 0.15 * fat_dev)
+        # Weighted total score
+        total_score = (
+        weights['calories'] * calorie_score +
+        weights['protein'] * protein_score +
+        weights['carbs'] * carb_score +
+        weights['fat'] * fat_score
+    )
 
-        #Covert to score (higher is better)
-        score = 1 / (1 + total_deviation)
+        # Bonus scoring
+        bonus = 0
+        if abs(recipe['calories'] - meal_target_calories) / meal_target_calories <= 0.15:
+            bonus += 0.05
+        if recipe['protein'] >= meal_protein_target * 0.8:
+            bonus += 0.03
 
-        return min(score, 1.0) #cap at 1.0
+    # Bonus for balanced macro profile (especially protein ratio)
+        recipe_protein_ratio = (recipe['protein'] * 4) / recipe['calories']
+        target_protein_ratio = macro_distribution['protein']
+        if abs(recipe_protein_ratio - target_protein_ratio) <= 0.05:
+            bonus += 0.02
 
-    def add_variety_penalty(self, recipes: pd.DataFrame, recent_recipes:List[int]):
+        final_score = min(total_score + bonus, 1.0)
+        return final_score
+
+
+    def add_variety_penalty(self, recipes: pd.DataFrame, recent_recipes:List[int], penalty_factor: float = 0.6):
         '''
         Add penalty to recently used recipes to encourage variety
 
@@ -87,9 +194,11 @@ class ContentBasedRecommender:
         recipes = recipes.copy()
 
         #Reduce score for recently used recipes
-        for recipe_id in recent_recipes:
-            mask = recipes['recipe_id'] == recipe_id
-            recipes.loc[mask, 'score'] *= 0.5 # 50% penalty
+        for i, recipe_name in enumerate(recent_recipes):
+            #Decay penality for older recipes
+            decay_factor = penalty_factor * (0.8 ** i) # Exponential decay
+            mask = recipes['recipe_id'] == recipe_name
+            recipes.loc[mask, 'score'] *= decay_factor
         return recipes
     
     #Yo sodnu xa ai lai like how it works
@@ -105,33 +214,28 @@ class ContentBasedRecommender:
             return None
         
         #Get top N recipes
-        top_recipes = scored_recipes.nlargest(min(n_options, len(scored_recipes)), 'score')
+        top_recipes = scored_recipes.nlargest(n_options, 'score')
 
-        #Add some randomization weighted by score
-        weights = top_recipes['score'].values
-        weights = weights / weights.sum() #Normalize
-
-        #Select based on weighted probability
-        selected_idx = np.random.choice(len(top_recipes), p=weights)
+        # Temperature-based selection (higher temperature = more exploration)
+        temperature = 0.8
+        scores = top_recipes['score'].values
+        
+        # Apply temperature scaling
+        scaled_scores = scores / temperature
+        probabilities = softmax(scaled_scores)
+        
+        # Select based on weighted probability
+        selected_idx = np.random.choice(len(top_recipes), p=probabilities)
         return top_recipes.iloc[selected_idx]
-    
     def generate_meal_plan(self, user_profile: Dict, days: int = 7, 
-                          recent_recipes: List[int] = None):
+                          recent_recipes: List[str] = None):
         """
-        Generate a complete meal plan for specified number of days
-        
-        Args:
-            user_profile: User profile dictionary
-            days: Number of days to plan for
-            recent_recipes: Recently used recipe IDs to avoid
-        
-        Returns:
-            Tuple of (meal_plan_dict, nutrition_summary)
+        Generate optimized meal plan with improved algorithm
         """
         if recent_recipes is None:
             recent_recipes = []
         
-        # Calculate user's nutritional needs
+        # Calculate nutritional needs
         bmr = self.nutrition_calc.calculate_bmr(
             user_profile['weight'], user_profile['height'], 
             user_profile['age'], user_profile['gender']
@@ -139,87 +243,94 @@ class ContentBasedRecommender:
         
         tdee = self.nutrition_calc.calculate_tdee(bmr, user_profile['activity_level'])
         target_calories = self.nutrition_calc.calculate_target_calories(tdee, user_profile['weight_goal'])
-        target_macros = self.nutrition_calc.calculate_macros(target_calories, user_profile['weight_goal'])
+        target_macros = self.nutrition_calc.calculate_macros(target_calories= target_calories, weight_goal=user_profile['weight_goal'], body_weight=user_profile['weight'], activity_level=user_profile['activity_level'])
         
-        # Filter recipes based on dietary preferences
+        # Filter recipes
         suitable_recipes = self.filter_by_dietary_preferences(self.recipes_df, user_profile)
         
         meal_plan = {}
         used_recipes = recent_recipes.copy()
+        goal = user_profile.get('weight_goal', 'maintain')
+        activity_level = user_profile.get('activity_level', 'lightly_active')
         
-        # Meal types and their typical calorie distribution
         meal_types = ['breakfast', 'lunch', 'dinner', 'snack']
         
         for day in range(1, days + 1):
             daily_meals = {}
-            daily_calories = 0
-            daily_protein = 0
-            daily_carbs = 0
-            daily_fat = 0
+            daily_totals = {'calories': 0, 'protein': 0, 'carbs': 0, 'fat': 0}
             
             for meal_type in meal_types:
-                # Get recipes for this meal type
+                # Get meal-specific recipes
                 meal_recipes = suitable_recipes[
                     suitable_recipes['meal_type'].str.lower() == meal_type.lower()
                 ].copy()
                 
                 if len(meal_recipes) > 0:
-                    # Calculate nutritional scores
+                    # Calculate advanced nutritional scores
                     meal_recipes['score'] = meal_recipes.apply(
                         lambda x: self.calculate_nutritional_score(
-                            x, target_calories, target_macros, meal_type
+                            x, target_calories, meal_type= meal_type, goal= goal, activity_level= activity_level
                         ), axis=1
                     )
                     
                     # Apply variety penalty
-                    meal_recipes = self.add_variety_penalty(meal_recipes, used_recipes)
+                    # meal_recipes = self.add_variety_penalty(meal_recipes, used_recipes)
                     
-                    # Select recipe with variety
+                    # Select recipe
                     selected_recipe = self.select_diverse_recipes(meal_recipes)
+
                     
                     if selected_recipe is not None:
                         daily_meals[meal_type] = {
-                            'recipe_id': int(selected_recipe['recipe_id']),
                             'name': selected_recipe['name'],
-                            'calories': float(selected_recipe['total_calories']),
+                            'calories': float(selected_recipe['calories']),
                             'protein': float(selected_recipe['protein']),
                             'carbs': float(selected_recipe['carbs']),
-                            'fat': float(selected_recipe['fat']),
+                            'fats': float(selected_recipe['fats']),
                             'ingredients': selected_recipe.get('ingredients', ''),
-                            'instructions': selected_recipe.get('instructions', '')
+                            'instructions': selected_recipe.get('instructions', ''),
+                            'score': float(selected_recipe['score'])
                         }
                         
-                        # Track used recipes
-                        used_recipes.append(int(selected_recipe['recipe_id']))
+                        # Track usage
+                        used_recipes.insert(0, selected_recipe['name'])  # Most recent first
+                        used_recipes = used_recipes[:10]  # Keep only recent 10
                         
-                        # Accumulate daily totals
-                        daily_calories += float(selected_recipe['total_calories'])
-                        daily_protein += float(selected_recipe['protein'])
-                        daily_carbs += float(selected_recipe['carbs'])
-                        daily_fat += float(selected_recipe['fat'])
+                        # Update daily totals
+                        daily_totals['calories'] += float(selected_recipe['calories'])
+                        daily_totals['protein'] += float(selected_recipe['protein'])
+                        daily_totals['carbs'] += float(selected_recipe['carbs'])
+                        daily_totals['fat'] += float(selected_recipe['fats'])
             
             # Add daily summary
             daily_meals['daily_summary'] = {
-                'total_calories': round(daily_calories, 1),
-                'total_protein': round(daily_protein, 1),
-                'total_carbs': round(daily_carbs, 1),
-                'total_fat': round(daily_fat, 1),
-                'target_calories': target_calories,
-                'calorie_variance': round(((daily_calories - target_calories) / target_calories) * 100, 1)
+                'total_calories': round(daily_totals['calories'], 1),
+                'total_protein': round(daily_totals['protein'], 1),
+                'total_carbs': round(daily_totals['carbs'], 1),
+                'total_fat': round(daily_totals['fat'], 1),
+                'target_calories': round(target_calories, 2),
+                'calorie_variance': round(((daily_totals['calories'] - target_calories) / target_calories) * 100, 1),
+                'protein_target': round(target_macros['protein'], 1),
+                'carbs_target': round(target_macros['carbs'], 1),
+                'fat_target': round(target_macros['fat'], 1)
             }
             
             meal_plan[f'day_{day}'] = daily_meals
         
-        # Overall nutrition summary
+        # Nutrition summary
         nutrition_summary = {
             'user_profile': {
-                'bmr': bmr,
-                'tdee': tdee,
-                'target_calories': target_calories,
-                'target_macros': target_macros
+                'bmr': round(bmr, 1),
+                'tdee': round(tdee, 1),
+                'target_calories': round(target_calories, 1),
+                'target_macros': target_macros,
+                'meal_distribution': self.get_meal_distribution(goal, activity_level)
             },
             'plan_duration': days,
-            'total_recipes_used': len(set(used_recipes) - set(recent_recipes))
+            'avg_calorie_variance': round(np.mean([
+                meal_plan[f'day_{i}']['daily_summary']['calorie_variance'] 
+                for i in range(1, days + 1)
+            ]), 1)
         }
         
         return meal_plan, nutrition_summary
