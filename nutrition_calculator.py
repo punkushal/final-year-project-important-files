@@ -65,32 +65,73 @@ class NutritionCalculator:
         else:
             return tdee #maintain
 
-    def calculate_macros(self, target_calories: float, weight_goal: str):
+    def calculate_macros(self, target_calories: float, weight_goal: str, body_weight:float, activity_level:str):
         """
         Calculate target macronutrient distribution
         
-        Args:
-            target_calories: Target daily calories
-            weight_goal: Weight goal for macro optimization
-        
-        Returns:
-            Dictionary with target grams of protein, carbs, fat
+        Research basis:
+            - Protein: 0.8-2.2/kg body weight depending on goals (Phillips & Van Loon, 2011)
+            - Carbs : 3-12 g/kg for active individuals (Thomas et al., 2016)
+            - Fat: 20-35% of total calories (AMDR recommendations)
         """
-        # Macro ratios based on goals (research-based)
+        # # Macro ratios based on goals (research-based)
+        # if weight_goal == 'loss':
+        #     # Higher protein for muscle preservation during deficit
+        #     protein_ratio, carb_ratio, fat_ratio = 0.35, 0.35, 0.30
+        # elif weight_goal == 'gain':
+        #     # Higher carbs for energy and muscle building
+        #     protein_ratio, carb_ratio, fat_ratio = 0.25, 0.45, 0.30
+        # else:  # maintain
+        #     # Balanced approach
+        #     protein_ratio, carb_ratio, fat_ratio = 0.25, 0.45, 0.30
+        # Body weight-based calculations (more accurate)
         if weight_goal == 'loss':
-            # Higher protein for muscle preservation during deficit
-            protein_ratio, carb_ratio, fat_ratio = 0.35, 0.35, 0.30
+            protein_g_per_kg = 2.0  # High protein for muscle preservation
+            activity_multiplier = {'sedentary': 0.8, 'lightly_active': 0.9, 
+                                     'moderately_active': 1.0, 'very_active': 1.2}.get(activity_level, 1.0)
+            carb_g_per_kg = 3.0 * activity_multiplier  # Lower carbs for fat loss
+                
         elif weight_goal == 'gain':
-            # Higher carbs for energy and muscle building
-            protein_ratio, carb_ratio, fat_ratio = 0.25, 0.45, 0.30
+            protein_g_per_kg = 1.6  # Adequate for muscle building
+            activity_multiplier = {'sedentary': 1.0, 'lightly_active': 1.2, 
+                                     'moderately_active': 1.4, 'very_active': 1.6}.get(activity_level, 1.4)
+            carb_g_per_kg = 5.0 * activity_multiplier  # Higher carbs for energy
+                
         else:  # maintain
-            # Balanced approach
-            protein_ratio, carb_ratio, fat_ratio = 0.25, 0.45, 0.30
-        
+            protein_g_per_kg = 1.4  # Balanced maintenance
+            activity_multiplier = {'sedentary': 0.9, 'lightly_active': 1.1, 
+                                     'moderately_active': 1.3, 'very_active': 1.5}.get(activity_level, 1.3)
+            carb_g_per_kg = 4.0 * activity_multiplier
+
+        # Calculate grams
+        protein_grams = body_weight * protein_g_per_kg
+        carb_grams = body_weight * carb_g_per_kg
+
+        # Calculate calories from protein and carbs
+        protein_calories = protein_grams * 4
+        carb_calories = carb_grams * 4
+
+        # Remaining calories from fat
+        remaining_calories = target_calories - protein_calories - carb_calories
+        fat_grams = max(remaining_calories / 9 , target_calories * 0.20 / 9) #Minimum 20% fat
+
+        #Adjusting if total exceeds target
+        total_calories = protein_calories + carb_calories + (fat_grams * 9)
+        if total_calories > target_calories:
+            #Reduce carbs first , then fat
+            excess = total_calories - target_calories
+            carb_reduction = min(excess / 4, carb_grams * 0.2) # max 20% reduction
+            carb_grams -= carb_reduction
+
+            #Recalculate
+            carb_calories = carb_grams * 4
+            remaining_calories = target_calories - protein_calories - carb_calories
+            fat_grams  = remaining_calories / 9
+
         return {
-            'protein': round((target_calories * protein_ratio) / 4, 1),  # 4 cal/gram
-            'carbs': round((target_calories * carb_ratio) / 4, 1),       # 4 cal/gram
-            'fat': round((target_calories * fat_ratio) / 9, 1)           # 9 cal/gram
+             'protein': round(protein_grams, 1),
+                'carbs': round(carb_grams, 1),
+                'fat': round(fat_grams, 1)
         }
     
     def get_goal_based_weights(self, goal: str):
@@ -98,14 +139,16 @@ class NutritionCalculator:
         Returns weightings for calorie, protein, carbs, fat deviation
         based on user goal.
 
-        Returns:
-        Dict[str, float]
+        Based on:
+            - Weight loss: Calorie control most imp, then protein
+            - Weight gain: calorie surplus most imp, then carbs for energey
+            - Maintenacne: Balanced approach with slight protein emphasis
         """
         goal = goal.lower()
         if goal == 'loss':
-            return {'calories': 0.5, 'protein': 0.3, 'carbs': 0.15, 'fat': 0.05}
+            return {'calories': 0.35, 'protein': 0.30, 'carbs': 0.20, 'fat': 0.15}
         elif goal == 'gain':
-            return {'calories': 0.3, 'protein': 0.4, 'carbs': 0.2, 'fat': 0.1}
-        else:  # default to balanced
-            return {'calories': 0.4, 'protein': 0.25, 'carbs': 0.2, 'fat': 0.15}
+            return {'calories': 0.30, 'protein': 0.25, 'carbs': 0.30, 'fat': 0.15}
+        else:  # default to maintain
+            return {'calories': 0.25, 'protein': 0.30, 'carbs': 0.25, 'fat': 0.20}
         
