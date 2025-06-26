@@ -127,16 +127,16 @@ class ContentBasedRecommender:
         meal_distribution = self.get_meal_distribution(goal, activity_level)
         macro_distribution = self.get_macro_distribution(goal=goal, meal_type=meal_type)
     
-        meal_target_calories = target_calories * meal_distribution[meal_type]
-        meal_protein_target = (meal_target_calories * macro_distribution['protein']) / 4
-        meal_carb_target = (meal_target_calories * macro_distribution['carbs']) / 4
-        meal_fat_target = (meal_target_calories * macro_distribution['fat']) / 9
+        meal_target_calories = round(target_calories * meal_distribution[meal_type], 2) 
+        meal_protein_target = round((meal_target_calories * macro_distribution['protein']) / 4, 2)
+        meal_carb_target = round((meal_target_calories * macro_distribution['carbs']) / 4,2)
+        meal_fat_target = round((meal_target_calories * macro_distribution['fat']) / 9,2)
     
         # Compute individual scores using Gaussian decay
-        calorie_score = gaussian_decay(recipe['calories'], meal_target_calories, tolerance=0.15)
-        protein_score = gaussian_decay(recipe['protein'], meal_protein_target, tolerance=0.15)
-        carb_score = gaussian_decay(recipe['carbs'], meal_carb_target, tolerance=0.15)
-        fat_score = gaussian_decay(recipe['fats'], meal_fat_target, tolerance=0.15)
+        calorie_score = round(gaussian_decay(recipe['calories'], meal_target_calories, tolerance=0.15),2)
+        protein_score = round(gaussian_decay(recipe['protein'], meal_protein_target, tolerance=0.15),2)
+        carb_score = round(gaussian_decay(recipe['carbs'], meal_carb_target, tolerance=0.15),2)
+        fat_score = round(gaussian_decay(recipe['fats'], meal_fat_target, tolerance=0.15),2)
 
         # Goal-based weightings
         if goal == 'loss':
