@@ -179,13 +179,13 @@ class ContentBasedRecommender:
         return final_score
 
 
-    def add_variety_penalty(self, recipes: pd.DataFrame, recent_recipes:List[int], penalty_factor: float = 0.6):
+    def add_variety_penalty(self, recipes: pd.DataFrame, recent_recipes:List[str], penalty_factor: float = 0.6):
         '''
         Add penalty to recently used recipes to encourage variety
 
         Args:
             recipes: Dataframe with scores
-            recent_recipes: List of recently used recipe IDs
+            recent_recipes: List of recently used recipe names
 
         Returns:
             DataFrame with adjusted scores
@@ -197,7 +197,7 @@ class ContentBasedRecommender:
         for i, recipe_name in enumerate(recent_recipes):
             #Decay penality for older recipes
             decay_factor = penalty_factor * (0.8 ** i) # Exponential decay
-            mask = recipes['recipe_id'] == recipe_name
+            mask = recipes['name'] == recipe_name
             recipes.loc[mask, 'score'] *= decay_factor
         return recipes
     
