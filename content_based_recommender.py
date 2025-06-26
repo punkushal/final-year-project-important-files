@@ -92,21 +92,36 @@ class ContentBasedRecommender:
 
         #Filter by dietary preference
         dietary_pref:str = user_profile.get('dietary_pref', 'non-veg')
-        if dietary_pref in ['vegan', 'vegetarian']:
+
+        if dietary_pref == 'vegan':
             filtered_recipes = filtered_recipes[filtered_recipes['category'].str.lower() == dietary_pref.lower()]
+        elif dietary_pref == 'vegetarian':
+            filtered_recipes = filtered_recipes[filtered_recipes['category'].str.lower().isin(['vegan', 'vegetarian'])]
         
         # Filter by allergies
-
         allergies = user_profile.get('allergies', [])
+
         
+        if allergies and allergies !=[]:
+            # Converting user allergies to match the format in the column (e.g gluten-free, nuts-free etch)
+            allergy_filters = [f"{a}-free" for a in allergies]
+            strict_filtered = filtered_recipes[filtered_recipes['allergies_free'].apply(
+                        lambda free_list: all(af in free_list for af in allergy_filters)
+                        )]
+            if len(strict_filtered) >=20:
+                return strict_filtered
+            
+            relaxed_filtered = filtered_recipes[filtered_recipes['allergies_free'].apply(
+                                    lambda free_list: any(af in free_list for af in allergy_filters)
+                                    )]
+            if len(relaxed_filtered) >0:
+                print(f"Relaxed allergy filtering applied due to limited options")
+                return relaxed_filtered
 
-        # Converting user allergies to match the format in the column (e.g gluten-free, nuts-free etch)
-        allergy_filters = [f"{a}-free" for a in allergies]
-
-        # Filter recipes that are free from all user allergens
-        filtered_recipes = filtered_recipes[filtered_recipes['allergies_free'].apply(
-            lambda free_list: all(af in free_list for af in allergy_filters)
-            )]
+        # # Filter recipes that are free from all user allergens
+        # filtered_recipes = filtered_recipes[filtered_recipes['allergies_free'].apply(
+        #     lambda free_list: all(af in free_list for af in allergy_filters)
+        #     )]
         return filtered_recipes
 
 
@@ -202,9 +217,9 @@ class ContentBasedRecommender:
         return recipes
     
     #Yo sodnu xa ai lai like how it works
-    def select_diverse_recipes(self, scored_recipes: pd.DataFrame, n_options:int = 3):
+    def select_diverse_recipes(self, scored_recipes: pd.DataFrame, n_options:int = 5, used_recipes_count:dict = None):
         '''
-        Select recipe with some randomization to ensure variety
+        Select recipe with improved diversity control
 
         Args:
             scored_recipes: DataFrame with nutritional scores
@@ -213,11 +228,18 @@ class ContentBasedRecommender:
         if len(scored_recipes) == 0:
             return None
         
+        if used_recipes_count:
+            scored_recipes = scored_recipes.copy()
+            for recipe_name, count in used_recipes_count.items():
+                if count >=2:
+                    mask = scored_recipes['name'] == recipe_name
+                    scored_recipes.loc[mask, 'score'] *= (0.1 ** count)
+
         #Get top N recipes
         top_recipes = scored_recipes.nlargest(n_options, 'score')
 
         # Temperature-based selection (higher temperature = more exploration)
-        temperature = 0.8
+        temperature = 0.5
         scores = top_recipes['score'].values
         
         # Apply temperature scaling
@@ -228,7 +250,7 @@ class ContentBasedRecommender:
         selected_idx = np.random.choice(len(top_recipes), p=probabilities)
         return top_recipes.iloc[selected_idx]
     def generate_meal_plan(self, user_profile: Dict, days: int = 7, 
-                          recent_recipes: List[str] = None):
+                          recent_recipes: List[str] = None, max_recipe_repeats: int = 2):
         """
         Generate optimized meal plan with improved algorithm
         """
@@ -250,15 +272,22 @@ class ContentBasedRecommender:
         
         meal_plan = {}
         used_recipes = recent_recipes.copy()
+        # Track how many times each recipe is used
+        recipe_usage_count = {}
         goal = user_profile.get('weight_goal', 'maintain')
         activity_level = user_profile.get('activity_level', 'lightly_active')
         
         meal_types = ['breakfast', 'lunch', 'dinner', 'snack']
-        
+        # Pre calulating available recipes per meal type
+        meal_type_recipes = {}
+        for meal_type in meal_types:
+            meal_type_recipes[meal_type] = suitable_recipes[suitable_recipes['meal_type'].str.lower() == meal_type.lower()].copy()
+            print(f"Available {meal_type} recipes: {len(meal_type_recipes[meal_type])}")
         for day in range(1, days + 1):
             daily_meals = {}
             daily_totals = {'calories': 0, 'protein': 0, 'carbs': 0, 'fat': 0}
             
+            print(f"\n---Planning Day {day} ---")
             for meal_type in meal_types:
                 # Get meal-specific recipes
                 meal_recipes = suitable_recipes[
@@ -274,13 +303,33 @@ class ContentBasedRecommender:
                     )
                     
                     # Apply variety penalty
-                    # meal_recipes = self.add_variety_penalty(meal_recipes, used_recipes)
+                    meal_recipes = self.add_variety_penalty(meal_recipes, used_recipes)
                     
                     # Select recipe
-                    selected_recipe = self.select_diverse_recipes(meal_recipes)
+                    selected_recipe = self.select_diverse_recipes(meal_recipes, n_options=min(5, len(meal_recipes)), used_recipes_count=recipe_usage_count)
 
                     
                     if selected_recipe is not None:
+                        recipe_name:str = selected_recipe['name']
+
+                        #Checking if recipe exceeds max repeats
+                        current_usage = recipe_usage_count.get(recipe_name, 0)
+
+                        # if recipe is overused, try to fine the alternative
+                        attempts = 0
+                        while current_usage >= max_recipe_repeats and attempts <3:
+                            print(f"Recipe '{recipe_name}' used {current_usage} times, finding alternative...")
+
+                            # Removing overused recipe and try again
+                            meal_recipes_filtered = meal_recipes[meal_recipes['name'].str != recipe_name].copy()
+                            if len(meal_recipes_filtered) > 0:
+                                selected_recipe = self.select_diverse_recipes(meal_recipes_filtered, n_options=min(5, len(meal_recipes_filtered)), used_recipes_count=recipe_usage_count)
+                                recipe_name = selected_recipe['name']
+                                current_usage = recipe_usage_count.get(recipe_name, 0)
+
+                            else:
+                                break
+                            attempts +=1
                         daily_meals[meal_type] = {
                             'name': selected_recipe['name'],
                             'calories': float(selected_recipe['calories']),
@@ -293,8 +342,11 @@ class ContentBasedRecommender:
                         }
                         
                         # Track usage
-                        used_recipes.insert(0, selected_recipe['name'])  # Most recent first
-                        used_recipes = used_recipes[:10]  # Keep only recent 10
+                        used_recipes.insert(0, recipe_name)  # Most recent first
+                        used_recipes = used_recipes[:15]  # Keep only recent 15
+                        recipe_usage_count[recipe_name] = recipe_usage_count.get(recipe_name, 0) + 1
+
+                        print(f"{meal_type.title()}: {recipe_name} (used {recipe_usage_count[recipe_name]} times)")
                         
                         # Update daily totals
                         daily_totals['calories'] += float(selected_recipe['calories'])
@@ -316,7 +368,6 @@ class ContentBasedRecommender:
             }
             
             meal_plan[f'day_{day}'] = daily_meals
-        
         # Nutrition summary
         nutrition_summary = {
             'user_profile': {
