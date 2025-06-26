@@ -1,8 +1,16 @@
 from activity_assessment import ActivityAssessment
 from content_based_recommender import ContentBasedRecommender
 import pandas as pd
+import ast
 
-df = pd.read_csv('updated_recipes.csv')
+df = pd.read_csv('combined_recipes.csv')
+
+
+# Convert stringified lists to real Python lists
+df['allergies_free'] = df['allergies_free'].apply(
+    lambda x: ast.literal_eval(x) if isinstance(x, str) else x
+)
+
 
 recommender = ContentBasedRecommender(df)
 #Asking user for their info such as age, height, weight and so on...
@@ -56,7 +64,7 @@ def get_allergies():
     print('6. gluten, dairy')
     print('7. all')
     print('8. none')
-    choice = get_valid_integer('Choose your allergies(1-3): ', 1, 8)
+    choice = get_valid_integer('Choose your allergies(1-8): ', 1, 8)
     allergies_map = {1: 'gluten', 2: 'nuts', 3: 'dairy', 4: ['gluten', 'nuts'], 5: ['nuts', 'dairy'], 6:['gluten', 'dairy'], 7:['gluten', 'nuts', 'dairy'], 8:[]}
     allergies = allergies_map.get(choice, [])
     return allergies
