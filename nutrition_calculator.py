@@ -104,7 +104,8 @@ class NutritionCalculator:
             carb_g_per_kg = 4.0 * activity_multiplier
 
         # Calculate grams
-        protein_grams = body_weight * protein_g_per_kg
+        max_protein_per_kg = 2.2
+        protein_grams = min(body_weight * protein_g_per_kg, max_protein_per_kg * body_weight)
         carb_grams = body_weight * carb_g_per_kg
 
         # Calculate calories from protein and carbs
