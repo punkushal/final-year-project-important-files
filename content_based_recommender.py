@@ -131,7 +131,7 @@ class ContentBasedRecommender:
         Rewards closeness and punishes large mismatches softly.
         '''
     
-        def gaussian_decay(actual, target, tolerance=0.1):
+        def gaussian_decay(actual, target, tolerance=0.05):
             """
             Compute a score between 0 and 1 based on closeness to target using Gaussian decay.
             Higher score = closer to target.
@@ -146,20 +146,23 @@ class ContentBasedRecommender:
         meal_protein_target = round((meal_target_calories * macro_distribution['protein']) / 4, 2)
         meal_carb_target = round((meal_target_calories * macro_distribution['carbs']) / 4,2)
         meal_fat_target = round((meal_target_calories * macro_distribution['fat']) / 9,2)
+
+        meal_fiber_target = 6.0 if meal_type in ['breakfast', 'lunch', 'dinner'] else 3.0
     
         # Compute individual scores using Gaussian decay
-        calorie_score = round(gaussian_decay(recipe['calories'], meal_target_calories, tolerance=0.15),2)
-        protein_score = round(gaussian_decay(recipe['protein'], meal_protein_target, tolerance=0.15),2)
-        carb_score = round(gaussian_decay(recipe['carbs'], meal_carb_target, tolerance=0.15),2)
-        fat_score = round(gaussian_decay(recipe['fats'], meal_fat_target, tolerance=0.15),2)
+        calorie_score = round(gaussian_decay(recipe['calories'], meal_target_calories, tolerance=0.05),2)
+        protein_score = round(gaussian_decay(recipe['protein'], meal_protein_target, ),2)
+        carb_score = round(gaussian_decay(recipe['carbs'], meal_carb_target,),2)
+        fat_score = round(gaussian_decay(recipe['fats'], meal_fat_target, ),2)
+        fiber_score = round(gaussian_decay(recipe.get('fiber', 0), meal_fiber_target, ), 2)
 
         # Goal-based weightings
         if goal == 'loss':
-            weights = {'calories': 0.40, 'protein': 0.35, 'carbs': 0.15, 'fat': 0.10}
+            weights = {'calories': 0.40, 'protein': 0.30, 'carbs': 0.15, 'fat': 0.10, 'fiber':0.10}
         elif goal == 'gain':
-            weights = {'calories': 0.35, 'protein': 0.25, 'carbs': 0.30, 'fat': 0.10}
+            weights = {'calories': 0.40, 'protein': 0.25, 'carbs': 0.25, 'fat': 0.10, 'fiber':0.10}
         else:
-            weights = {'calories': 0.30, 'protein': 0.25, 'carbs': 0.25, 'fat': 0.20}
+            weights = {'calories': 0.40, 'protein': 0.25, 'carbs': 0.25, 'fat': 0.10, 'fiber':0.10}
 
         # Meal-specific adjustments
         if meal_type == 'breakfast':
@@ -174,14 +177,18 @@ class ContentBasedRecommender:
         weights['calories'] * calorie_score +
         weights['protein'] * protein_score +
         weights['carbs'] * carb_score +
-        weights['fat'] * fat_score
+        weights['fat'] * fat_score + 
+        weights['fiber'] * fiber_score 
     )
 
         # Bonus scoring
         bonus = 0
-        if abs(recipe['calories'] - meal_target_calories) / meal_target_calories <= 0.15:
+        calorie_diff = abs(recipe['calories'] - meal_target_calories) / meal_target_calories
+        if calorie_diff <= 0.02:
             bonus += 0.05
-        if recipe['protein'] >= meal_protein_target * 0.8:
+        elif calorie_diff <=0.05:
+            bonus +=0.03
+        elif recipe['protein'] >= meal_protein_target * 0.8:
             bonus += 0.03
 
     # Bonus for balanced macro profile (especially protein ratio)
@@ -216,8 +223,7 @@ class ContentBasedRecommender:
             recipes.loc[mask, 'score'] *= decay_factor
         return recipes
     
-    #Yo sodnu xa ai lai like how it works
-    def select_diverse_recipes(self, scored_recipes: pd.DataFrame, n_options:int = 5, used_recipes_count:dict = None):
+    def select_diverse_recipes(self, scored_recipes: pd.DataFrame, n_options:int = 3, used_recipes_count:dict = None):
         '''
         Select recipe with improved diversity control
 
@@ -239,7 +245,7 @@ class ContentBasedRecommender:
         top_recipes = scored_recipes.nlargest(n_options, 'score')
 
         # Temperature-based selection (higher temperature = more exploration)
-        temperature = 0.5
+        temperature = 0.3
         scores = top_recipes['score'].values
         
         # Apply temperature scaling
@@ -248,9 +254,18 @@ class ContentBasedRecommender:
         
         # Select based on weighted probability
         selected_idx = np.random.choice(len(top_recipes), p=probabilities)
-        return top_recipes.iloc[selected_idx]
+        return top_recipes.iloc[0]
+    
+    def filter_recipes_by_calorie_window(self, recipes_df: pd.DataFrame, meal_target_calories:float, window:float = 0.05):
+        '''
+        Filters recipes to only those within ±2% window of target calories
+        '''
+        lower_bound = meal_target_calories * (1 - window)
+        upper_bound = meal_target_calories * (1 + window)
+        filtered = recipes_df[(recipes_df['calories'] >= lower_bound) & (recipes_df['calories'] <= upper_bound)]
+        return filtered
     def generate_meal_plan(self, user_profile: Dict, days: int = 7, 
-                          recent_recipes: List[str] = None, max_recipe_repeats: int = 2):
+                          recent_recipes: List[str] = None, max_recipe_repeats: int = 3):
         """
         Generate optimized meal plan with improved algorithm
         """
@@ -293,6 +308,20 @@ class ContentBasedRecommender:
                 meal_recipes = suitable_recipes[
                     suitable_recipes['meal_type'].str.lower() == meal_type.lower()
                 ].copy()
+
+                # Calculating target calories for this meal
+                meal_distribution = self.get_meal_distribution(goal, activity_level)
+                meal_target_calories = round(target_calories * meal_distribution[meal_type],2)
+
+                meal_recipes = self.filter_recipes_by_calorie_window(
+                    meal_recipes,
+                    meal_target_calories=meal_target_calories,
+                    window=0.05
+                )
+
+                if meal_recipes.empty:
+                    print(f"No recipes found within ±2% window for {meal_type}, using full set.")
+                    meal_recipes = suitable_recipes[suitable_recipes['meal_type'].str.lower() == meal_type.lower()].copy()
                 
                 if len(meal_recipes) > 0:
                     # Calculate advanced nutritional scores
@@ -301,6 +330,10 @@ class ContentBasedRecommender:
                             x, target_calories, meal_type= meal_type, goal= goal, activity_level= activity_level
                         ), axis=1
                     )
+
+                    # Penalizing very low-protein breakfast
+                    if meal_type =='breakfast':
+                        meal_recipes.loc[meal_recipes['protein'] < 10, 'score'] *= 0.9
                     
                     # Apply variety penalty
                     meal_recipes = self.add_variety_penalty(meal_recipes, used_recipes)
