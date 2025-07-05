@@ -1,15 +1,8 @@
 from activity_assessment import ActivityAssessment
 from content_based_recommender import ContentBasedRecommender
 import pandas as pd
-import ast
 
-df = pd.read_csv('combined_recipes.csv')
-
-
-# Convert stringified lists to real Python lists
-df['allergies_free'] = df['allergies_free'].apply(
-    lambda x: ast.literal_eval(x) if isinstance(x, str) else x
-)
+df = pd.read_csv('recipe_dataset.csv')
 
 
 recommender = ContentBasedRecommender(df)
@@ -68,7 +61,18 @@ def get_allergies():
     allergies_map = {1: 'gluten', 2: 'nuts', 3: 'dairy', 4: ['gluten', 'nuts'], 5: ['nuts', 'dairy'], 6:['gluten', 'dairy'], 7:['gluten', 'nuts', 'dairy'], 8:[]}
     allergies = allergies_map.get(choice, [])
     return allergies
-    
+
+# demo activity getter
+def get_activity():
+    print('\nActivity level:')
+    print('1. Sedentary')    
+    print('2. Ligtly active')    
+    print('3. moderately active')    
+    print('4. very active')
+    choice = get_valid_integer('Choose your activity level(1-4): ', 1, 4)
+    level_map = {1:'sedentary', 2: 'lightly_active', 3:'moderately_active', 4:'very_active'}
+    activity_level = level_map.get(choice, 'ligtly_active')
+    return activity_level    
 
 def display_meal_plan(meal_plan):
     for day_key in sorted(meal_plan.keys(), key=lambda x: int(x.split('_')[1])):
@@ -108,9 +112,13 @@ height = get_valid_integer("Enter your height in cm: ", 50, 300)
 weight = get_valid_integer("Enter your weight in kg: ", 10, 500)
 gender = get_valid_gender()
 
-assessment = ActivityAssessment()
-responses = assessment.ask_user_questions()
-activity_level = assessment.calculate_activity_level(responses)
+
+# Later i will use it
+# assessment = ActivityAssessment()
+# responses = assessment.ask_user_questions()
+# activity_level = assessment.calculate_activity_level(responses)
+
+activity_level = get_activity()
 
 user_wt_goal = get_weight_goal()
 user_pref = get_prefs()

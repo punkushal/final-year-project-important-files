@@ -350,7 +350,7 @@ class ContentBasedRecommender:
 
                         # if recipe is overused, try to fine the alternative
                         attempts = 0
-                        while current_usage >= max_recipe_repeats and attempts <3:
+                        while current_usage >= max_recipe_repeats and attempts <4:
                             print(f"Recipe '{recipe_name}' used {current_usage} times, finding alternative...")
 
                             # Removing overused recipe and try again
