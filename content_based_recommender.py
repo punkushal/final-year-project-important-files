@@ -354,7 +354,13 @@ class ContentBasedRecommender:
                             print(f"Recipe '{recipe_name}' used {current_usage} times, finding alternative...")
 
                             # Removing overused recipe and try again
-                            meal_recipes_filtered = meal_recipes[meal_recipes['name'].str != recipe_name].copy()
+                            # Safe recipe replacement logic
+                            recipe_name = str(recipe_name)
+                            meal_recipes['name'] = meal_recipes['name'].astype(str)
+                            meal_recipes_filtered = meal_recipes[meal_recipes['name'] != recipe_name].copy()
+                            if meal_recipes_filtered.empty:
+                                print(f"No alternative found for recipe '{recipe_name}', keeping it.")
+                                meal_recipes_filtered = meal_recipes.copy()
                             if len(meal_recipes_filtered) > 0:
                                 selected_recipe = self.select_diverse_recipes(meal_recipes_filtered, n_options=min(5, len(meal_recipes_filtered)), used_recipes_count=recipe_usage_count)
                                 recipe_name = selected_recipe['name']
